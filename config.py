@@ -5,3 +5,4 @@ load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
 TOKEN = os.getenv("TOKEN")
+PASSWORD_DB = os.getenv("PASSWORD_DB")
