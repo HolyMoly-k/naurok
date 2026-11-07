@@ -76,7 +76,7 @@ def build_prompt(questions):
         parts.append(f"{i}. {text}\n{options}")
     return "\n\n".join(parts)
 
-async def solve(questions, subject, grade, images):
+async def solve(questions, subject, grade, images, max_tokens):
     prompt = (
         f"Предмет: {subject}, {grade}.\n"
         "Розв'яжи кожне завдання. Для кожного поверни об'єкт з полями "
@@ -95,53 +95,24 @@ async def solve(questions, subject, grade, images):
     resp = await client.aio.models.generate_content(
         model=MODEL,
         contents=contents,
-        config=types.GenerateContentConfig(response_mime_type="application/json"), # , max_output_tokens=MAX_TOKENS
+        config=types.GenerateContentConfig(response_mime_type="application/json", max_output_tokens=max_tokens), # , max_output_tokens=MAX_TOKENS
     )
     print("Токенов спиздило: ", resp.usage_metadata.prompt_token_count)
-    text = resp.text
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Модель вернула кривой json: {text[:200]}") from e
+    return resp
 
-async def main(url: str):
+async def main(url: str, max_tokens: int) -> dict:
     uuid = url.split('/')[-1]
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(URL, follow_redirects=True, params={"uuid": uuid})
         r.raise_for_status()
-        if r.status_code == 404:
-            return (
-                "❌ <b>Некорректная ссылка!</b>\n\n"
-                "⚠️ <b>Важно!</b>\n"
-                "Отправляйте ссылку непосредственно во время прохождения теста."
-            )
         data = r.json()
         questions = data["questions"]
         images = await collect_images(client, questions)
 
-    result = (
-        f"📋 <b>{data['document']['name']}</b>\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"📚 Предмет: <b>{data['document']['subject']}</b>\n"
-        f"🎓 Класс: <b>{data['document']['grade']}</b>\n"
-        f"🖼 Изображений найдено: <b>{len(images)}</b>\n\n"
-        f"✅ <b>Ответы:</b>\n"
-    )
+    res = await solve(questions, data["document"]["subject"], data["document"]["grade"], images, max_tokens)
+    answers = json.loads(res.text)
 
-    answers = await solve(questions, data["document"]["subject"], data["document"]["grade"], images)
-
-    for num, item in answers.items():
-        q = questions[int(num) - 1]
-        result += f"\n<b>{num}.</b>\n"
-        for letter in item["answer"]:
-            idx = ord(letter) - ord('A')
-            option = clean(q['options'][idx]['value'])
-            result += f"   <b>{letter})</b> {option}\n"
-
-    result += "\n━━━━━━━━━━━━━━━━━━\n"
-    result += f"🤖 <i>Ответы сгенерированы {MODEL}</i>"
-
-    return result
+    return {"questions": questions, "answers": answers, "name": data["document"]["name"], "subject": data["document"]["subject"], "grade": data["document"]["grade"], "tokens_spent": res.usage_metadata.prompt_token_count}
 
 if __name__ == '__main__':
     url = input("Введите url: ")
